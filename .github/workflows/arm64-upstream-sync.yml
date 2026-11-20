@@ -1,0 +1,95 @@
+name: Build ARM64 Image from Upstream
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/arm64-upstream-sync.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: tkiethuynh/automorph
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out upstream holjab/AutoMorph (main)
+        uses: actions/checkout@v4
+        with:
+          repository: holjab/AutoMorph
+          ref: main
+
+      - name: Get upstream commit SHA
+        id: upstream
+        run: |
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Upstream main SHA: $SHA"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if image is already up to date
+        id: check
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          CURRENT_SHA=""
+          if docker pull "$IMAGE" >/dev/null 2>&1; then
+            CURRENT_SHA=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE" 2>/dev/null || true)
+          fi
+          echo "Current image SHA: ${CURRENT_SHA:-none}"
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "$CURRENT_SHA" = "${{ steps.upstream.outputs.sha }}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Already up to date; skipping build."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Write version.json
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          cat <<EOF > web/version.json
+          {
+            "version": "0.${{ github.run_number }}",
+            "tag": "main",
+            "run_number": ${{ github.run_number }},
+            "branch": "main",
+            "commit": "${{ steps.upstream.outputs.sha }}",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat web/version.json
+
+      - name: Build and push ARM64 Docker image
+        if: steps.check.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.upstream.outputs.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/holjab/AutoMorph
+            org.opencontainers.image.revision=${{ steps.upstream.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
