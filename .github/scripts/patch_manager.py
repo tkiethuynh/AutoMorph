@@ -49,3 +49,23 @@ src = src.replace(target_changelog, replacement_changelog, 1)
 src = src.replace(target_block, replacement_block, 1)
 p.write_text(src, encoding="utf-8")
 print("Patched scripts/manager.py successfully")
+
+mp = Path("scripts/morphe.py")
+msrc = mp.read_text(encoding="utf-8")
+anchor = '        cmd += ["--result-file", str(result_dest), "--options-file", str(options_to_use)]'
+ks_block = '''        cmd += ["--result-file", str(result_dest), "--options-file", str(options_to_use)]
+
+        ks = os.getenv("MORPHE_KEYSTORE")
+        if ks:
+            cmd += ["--keystore", ks]
+            if os.getenv("MORPHE_KEYSTORE_ALIAS"):
+                cmd += ["--keystore-entry-alias", os.getenv("MORPHE_KEYSTORE_ALIAS")]
+            if os.getenv("MORPHE_KEYSTORE_PASSWORD"):
+                cmd += [
+                    "--keystore-password", os.getenv("MORPHE_KEYSTORE_PASSWORD"),
+                    "--keystore-entry-password", os.getenv("MORPHE_KEYSTORE_PASSWORD"),
+                ]'''
+assert anchor in msrc, "anchor not found in scripts/morphe.py"
+msrc = msrc.replace(anchor, ks_block, 1)
+mp.write_text(msrc, encoding="utf-8")
+print("Patched scripts/morphe.py successfully")
