@@ -26,6 +26,9 @@ helper = '''    @staticmethod
 
 '''
 
+target_changelog = "                            'changelog': 'Patches automatically applied'"
+replacement_changelog = "                            'changelog': self._format_whats_new(sorted_details[0][1])"
+
 target_block = """                    'whatsNew': {
                         'en-US': 'new patches'
                     }"""
@@ -33,6 +36,7 @@ replacement_block = """                    'whatsNew': {
                         'en-US': self._format_whats_new(v_details)
                     }"""
 
+assert target_changelog in src, "metadata.changelog target not found in scripts/manager.py"
 assert target_block in src, "whatsNew target block not found in scripts/manager.py"
 assert "    def add_package(self):\n        index = {" in src, "FDroid.add_package not found"
 
@@ -41,6 +45,7 @@ src = src.replace(
     helper + "    def add_package(self):\n        index = {",
     1,
 )
+src = src.replace(target_changelog, replacement_changelog, 1)
 src = src.replace(target_block, replacement_block, 1)
 p.write_text(src, encoding="utf-8")
 print("Patched scripts/manager.py successfully")
