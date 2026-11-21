@@ -8,6 +8,7 @@ on:
       - main
     paths:
       - '.github/workflows/arm64-upstream-sync.yml'
+      - '.github/scripts/patch_manager.py'
   workflow_dispatch:
 
 env:
@@ -27,6 +28,11 @@ jobs:
         with:
           repository: holjab/AutoMorph
           ref: main
+
+      - name: Check out fork scripts
+        uses: actions/checkout@v4
+        with:
+          path: _fork
 
       - name: Get upstream commit SHA
         id: upstream
@@ -51,7 +57,7 @@ jobs:
             CURRENT_SHA=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE" 2>/dev/null || true)
           fi
           echo "Current image SHA: ${CURRENT_SHA:-none}"
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "$CURRENT_SHA" = "${{ steps.upstream.outputs.sha }}" ]; then
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "${{ github.event_name }}" != "push" ] && [ "$CURRENT_SHA" = "${{ steps.upstream.outputs.sha }}" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Already up to date; skipping build."
           else
@@ -62,7 +68,7 @@ jobs:
         if: steps.check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
-      - name: Write version.json
+      - name: Write version.json & patch manager.py
         if: steps.check.outputs.skip != 'true'
         run: |
           cat <<EOF > web/version.json
@@ -75,52 +81,8 @@ jobs:
             "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           }
           EOF
-          cat web/version.json
-
-      - name: Patch manager.py for per-app whatsNew changelogs
-        if: steps.check.outputs.skip != 'true'
-        run: |
-          python3 - <<'PYEOF'
-          from pathlib import Path
-
-          p = Path("scripts/manager.py")
-          src = p.read_text(encoding="utf-8")
-
-          helper = '''    @staticmethod
-    def _format_whats_new(v_details: dict) -> str:
-        patch_info = v_details.get('patch', {}) or {}
-        applied = patch_info.get('applied_patches', {}) or {}
-        repos = patch_info.get('repos', []) or []
-        morphe_ver = patch_info.get('morphe_desktop_version')
-        lines = []
-        if repos:
-            short_repos = [r.replace('https://github.com/', '').replace('https://gitlab.com/', '') for r in repos]
-            lines.append(f"Sources: {', '.join(short_repos)}")
-        if morphe_ver and morphe_ver != 'Unknown':
-            lines.append(f"Morphe: v{morphe_ver}")
-        if applied:
-            lines.append(f"Applied patches ({len(applied)}):")
-            for name in sorted(applied.keys()):
-                lines.append(f"- {name}")
-        return "\\n".join(lines) if lines else "Patched with AutoMorph"
-
-'''
-          target_block = """                    'whatsNew': {
-                        'en-US': 'new patches'
-                    }"""
-          replacement_block = """                    'whatsNew': {
-                        'en-US': self._format_whats_new(v_details)
-                    }"""
-
-          assert target_block in src, "whatsNew target block not found in scripts/manager.py"
-          assert "    def add_package(self):" in src, "FDroid.add_package not found"
-
-          # Insert helper inside FDroid class (right before def add_package)
-          src = src.replace("    def add_package(self):\n        index = {", helper + "    def add_package(self):\n        index = {", 1)
-          src = src.replace(target_block, replacement_block, 1)
-          p.write_text(src, encoding="utf-8")
-          print("Patched scripts/manager.py successfully")
-          PYEOF
+          python3 _fork/.github/scripts/patch_manager.py
+          rm -rf _fork
 
       - name: Build and push ARM64 Docker image
         if: steps.check.outputs.skip != 'true'
